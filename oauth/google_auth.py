@@ -28,7 +28,8 @@ SCOPES = ['https://www.googleapis.com/auth/adwords']
 API_VERSION = "v19"
 
 # Environment variables
-GOOGLE_ADS_OAUTH_CONFIG_PATH = os.environ.get("GOOGLE_ADS_OAUTH_CONFIG_PATH")
+GOOGLE_ADS_CLIENT_ID = os.environ.get("GOOGLE_ADS_CLIENT_ID")
+GOOGLE_ADS_CLIENT_SECRET = os.environ.get("GOOGLE_ADS_CLIENT_SECRET")
 GOOGLE_ADS_DEVELOPER_TOKEN = os.environ.get("GOOGLE_ADS_DEVELOPER_TOKEN")
 
 def format_customer_id(customer_id: str) -> str:
@@ -40,20 +41,16 @@ def format_customer_id(customer_id: str) -> str:
 
 def get_oauth_credentials():
     """Get and refresh OAuth user credentials using cohnen's approach."""
-    if not GOOGLE_ADS_OAUTH_CONFIG_PATH:
+    if not GOOGLE_ADS_CLIENT_ID or not GOOGLE_ADS_CLIENT_SECRET:
         raise ValueError(
-            "GOOGLE_ADS_OAUTH_CONFIG_PATH environment variable not set. "
-            "Please set it to point to your OAuth credentials JSON file."
+            "GOOGLE_ADS_CLIENT_ID and GOOGLE_ADS_CLIENT_SECRET environment variables not set. "
+            "Please set them to your OAuth credentials."
         )
-    
-    if not os.path.exists(GOOGLE_ADS_OAUTH_CONFIG_PATH):
-        raise FileNotFoundError(f"OAuth config file not found: {GOOGLE_ADS_OAUTH_CONFIG_PATH}")
     
     creds = None
     
-    # Path to store the token (same directory as OAuth config)
-    config_dir = os.path.dirname(os.path.abspath(GOOGLE_ADS_OAUTH_CONFIG_PATH))
-    token_path = os.path.join(config_dir, 'google_ads_token.json')
+    # Path to store the token in user's home directory
+    token_path = os.path.join(os.path.expanduser('~'), '.google_ads_token.json')
     
     # Load existing token if it exists
     if os.path.exists(token_path):
@@ -83,9 +80,17 @@ def get_oauth_credentials():
             logger.info("Starting OAuth authentication flow")
             
             try:
-                # Load client configuration
-                with open(GOOGLE_ADS_OAUTH_CONFIG_PATH, 'r') as f:
-                    client_config = json.load(f)
+                # Build client configuration from environment variables
+                client_config = {
+                    "installed": {
+                        "client_id": GOOGLE_ADS_CLIENT_ID,
+                        "client_secret": GOOGLE_ADS_CLIENT_SECRET,
+                        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                        "token_uri": "https://oauth2.googleapis.com/token",
+                        "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+                        "redirect_uris": ["http://localhost", "urn:ietf:wg:oauth:2.0:oob"]
+                    }
+                }
                 
                 # Create flow
                 flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
