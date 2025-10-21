@@ -1,5 +1,5 @@
 """
-Google Ads OAuth Authentication - cohnen's approach integrated into tool calls
+Google Ads OAuth Authentication - supports both local and FastMCP deployment
 """
 
 import os
@@ -31,6 +31,7 @@ API_VERSION = "v19"
 GOOGLE_ADS_CLIENT_ID = os.environ.get("GOOGLE_ADS_CLIENT_ID")
 GOOGLE_ADS_CLIENT_SECRET = os.environ.get("GOOGLE_ADS_CLIENT_SECRET")
 GOOGLE_ADS_DEVELOPER_TOKEN = os.environ.get("GOOGLE_ADS_DEVELOPER_TOKEN")
+GOOGLE_ADS_REFRESH_TOKEN = os.environ.get("GOOGLE_ADS_REFRESH_TOKEN")  # NEW: For FastMCP
 
 def format_customer_id(customer_id: str) -> str:
     """Format customer ID to ensure it's 10 digits without dashes."""
@@ -40,7 +41,7 @@ def format_customer_id(customer_id: str) -> str:
     return customer_id.zfill(10)
 
 def get_oauth_credentials():
-    """Get and refresh OAuth user credentials using cohnen's approach."""
+    """Get and refresh OAuth user credentials - supports both local and cloud."""
     if not GOOGLE_ADS_CLIENT_ID or not GOOGLE_ADS_CLIENT_SECRET:
         raise ValueError(
             "GOOGLE_ADS_CLIENT_ID and GOOGLE_ADS_CLIENT_SECRET environment variables not set. "
@@ -49,7 +50,35 @@ def get_oauth_credentials():
     
     creds = None
     
-    # Path to store the token in user's home directory
+    # NEW: Check if refresh token is provided (for FastMCP/cloud deployment)
+    if GOOGLE_ADS_REFRESH_TOKEN:
+        logger.info("Using refresh token from environment variable")
+        creds = Credentials(
+            token=None,
+            refresh_token=GOOGLE_ADS_REFRESH_TOKEN,
+            client_id=GOOGLE_ADS_CLIENT_ID,
+            client_secret=GOOGLE_ADS_CLIENT_SECRET,
+            token_uri='https://oauth2.googleapis.com/token',
+            scopes=SCOPES
+        )
+        
+        # Refresh to get access token
+        try:
+            logger.info("Refreshing token to get access token")
+            creds.refresh(Request())
+            logger.info("Token successfully refreshed")
+            return creds
+        except RefreshError as e:
+            logger.error(f"Refresh token is invalid: {e}")
+            raise ValueError(
+                "GOOGLE_ADS_REFRESH_TOKEN is invalid or expired. "
+                "Please generate a new refresh token by running authentication locally."
+            )
+        except Exception as e:
+            logger.error(f"Unexpected error refreshing token: {e}")
+            raise
+    
+    # Local development: Use token file or interactive flow
     token_path = os.path.join(os.path.expanduser('~'), '.google_ads_token.json')
     
     # Load existing token if it exists
@@ -75,9 +104,18 @@ def get_oauth_credentials():
                 logger.error(f"Unexpected error refreshing token: {e}")
                 raise
         
-        # Need new credentials - run OAuth flow
+        # Need new credentials - run OAuth flow (LOCAL ONLY)
         if not creds:
-            logger.info("Starting OAuth authentication flow")
+            logger.info("Starting OAuth authentication flow (local only)")
+            
+            # Check if we're in a cloud environment
+            is_cloud = os.environ.get("FASTMCP_ENV") or os.environ.get("RAILWAY_ENVIRONMENT")
+            if is_cloud:
+                raise ValueError(
+                    "Interactive OAuth flow cannot run in cloud environment. "
+                    "Please set GOOGLE_ADS_REFRESH_TOKEN environment variable. "
+                    "Run authentication locally first to generate the refresh token."
+                )
             
             try:
                 # Build client configuration from environment variables
@@ -95,20 +133,31 @@ def get_oauth_credentials():
                 # Create flow
                 flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
                 
-                # Run OAuth flow with automatic local server (cohnen's approach)
+                # Run OAuth flow with automatic local server
                 try:
                     creds = flow.run_local_server(port=0)
                     logger.info("OAuth flow completed successfully using local server")
                 except Exception as e:
-                    logger.warning(f"Local server failed: {e}, falling back to console")
-                    creds = flow.run_console()
-                    logger.info("OAuth flow completed successfully using console")
+                    logger.error(f"Local server failed: {e}")
+                    logger.error("Cannot use console flow in cloud environment")
+                    raise ValueError(
+                        "OAuth flow failed. For cloud deployment, please set "
+                        "GOOGLE_ADS_REFRESH_TOKEN environment variable."
+                    )
+                
+                # Print refresh token for user to save
+                if creds and creds.refresh_token:
+                    print("\n" + "="*60)
+                    print("IMPORTANT: Save this refresh token for FastMCP deployment:")
+                    print("="*60)
+                    print(f"GOOGLE_ADS_REFRESH_TOKEN={creds.refresh_token}")
+                    print("="*60 + "\n")
                 
             except Exception as e:
                 logger.error(f"OAuth flow failed: {e}")
                 raise
         
-        # Save the credentials
+        # Save the credentials for local use
         if creds:
             try:
                 logger.info(f"Saving credentials to {token_path}")
@@ -161,3 +210,22 @@ def execute_gaql(customer_id: str, query: str, manager_id: str = "") -> Dict[str
         'query': query,
         'totalRows': len(results),
     }
+
+
+# How to Use This Updated Code
+
+# Step 1: Generate Refresh Token Locally
+
+# ============================================================
+# IMPORTANT: Save this refresh token for FastMCP deployment:
+# ============================================================
+# GOOGLE_ADS_REFRESH_TOKEN=1//0gABC...xyz123
+# ============================================================
+
+# Step 2: Deploy to FastMCP
+
+# Add these environment variables in FastMCP:
+# GOOGLE_ADS_CLIENT_ID=your-client-id
+# GOOGLE_ADS_CLIENT_SECRET=your-client-secret
+# GOOGLE_ADS_DEVELOPER_TOKEN=your-developer-token
+# GOOGLE_ADS_REFRESH_TOKEN=1//0gABC...xyz123
